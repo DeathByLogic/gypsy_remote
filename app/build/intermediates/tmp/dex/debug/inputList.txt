@@ -1,0 +1,5 @@
+C:\Users\Daniel\Projects\Gypsy\trunk\BeagleBone\remote\Gypsy\app\build\intermediates\classes\debug
+C:\Users\Daniel\Projects\Gypsy\trunk\BeagleBone\remote\Gypsy\app\build\intermediates\pre-dexed\debug\support-annotations-21.0.3-bc6d48aa256a944dae514efb7620be498f80b8e8.jar
+C:\Users\Daniel\Projects\Gypsy\trunk\BeagleBone\remote\Gypsy\app\build\intermediates\pre-dexed\debug\internal_impl-21.0.3-8ce3139fd22a2c91f161e83ac16ef6043bf5447b.jar
+C:\Users\Daniel\Projects\Gypsy\trunk\BeagleBone\remote\Gypsy\app\build\intermediates\pre-dexed\debug\classes-f31806dfdd986e0990da18eacffb8d0997261d27.jar
+C:\Users\Daniel\Projects\Gypsy\trunk\BeagleBone\remote\Gypsy\app\build\intermediates\pre-dexed\debug\classes-61c28aa9092f0dab712797e2fa8e5ce4ca5a0a8e.jar
