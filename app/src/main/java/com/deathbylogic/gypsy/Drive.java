@@ -21,32 +21,45 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.Button;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.lang.reflect.Array;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class Drive extends ActionBarActivity implements View.OnTouchListener, SharedPreferences.OnSharedPreferenceChangeListener {
+public class Drive extends ActionBarActivity implements View.OnTouchListener, View.OnClickListener, SharedPreferences.OnSharedPreferenceChangeListener {
     private float cur_x, start_x;
     private float cur_y, start_y;
     private int speed;
     private int direction;
     private boolean moveEvent = false;
 
-    private String settings_ip_domain;
-    private String serverIpAddress = "";
+    private Button btnConnect;
+
+    private String  serverIpAddress = "";
+    private int     serverPort;
 
     private String line;
 
     private boolean connected = false;
 
-    private int serverPort;
     private Handler handler = new Handler();
+    private AtomicInteger myAtomicButtonInteger;
 
     OurView v;
+    ClientThread c;
+    Thread  cThread;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -83,6 +96,15 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Sh
         // TODO - !!!PUT THIS ALL IN A SEPARATE METHOD!!!
         // Populate field with default values from preferences
         SharedPreferences settings = PreferenceManager.getDefaultSharedPreferences(this);
+
+        // Get Settings
+        serverIpAddress = settings.getString("server_ip", "localhost");
+        serverPort = Integer.parseInt(settings.getString("server_port", "1988"));
+
+        //btnConnect = (Button) findViewById(R.id.btnConnect);
+        c = new ClientThread();
+        cThread = new Thread(c);
+        cThread.start();
     }
 
 
@@ -101,12 +123,19 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Sh
         int id = item.getItemId();
 
         //noinspection SimplifiableIfStatement
-        if (id == R.id.action_settings) {
-            // Creates a new intent to open up our settings activity (screen/page)
-            Intent i = new Intent(this, SettingsActivity.class);
-            startActivity(i);
+        switch (id) {
+            case R.id.action_settings:
+                // Creates a new intent to open up our settings activity (screen/page)
+                Intent i = new Intent(this, SettingsActivity.class);
+                startActivity(i);
 
-            return true;
+                return true;
+            case R.id.action_connect:
+
+
+                return true;
+            default:
+                // Do nothing
         }
 
         return super.onOptionsItemSelected(item);
@@ -186,6 +215,9 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Sh
                 break;
         }
 
+        c.send_speed((byte)speed);
+        c.send_direction((byte)direction);
+
         // Update text on screen
         //updateMovementLabels();
 
@@ -194,22 +226,34 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Sh
         return true;
     }
 
+    public void onClick(View v) {
+        // TODO Auto-generated method stub
+        /*if (v.getId() == R.id.btnConnect) {
+            // All code from below goes here!!!!
+
+            if (!connected) { // IF we're not connected at the moment, then let's connect!
+               if (!serverIpAddress.equals("")) {
+                    cThread = new Thread(c);
+                    cThread.start();
+                    btnConnect.setText(R.string.connecting);
+                                   }
+            } else {
+                Log.d("ClientActivity", "Disconnect button pressed");
+                myAtomicButtonInteger.getAndSet(4);
+                Log.d("ClientActivity", "(After) tmpAtomic=" + myAtomicButtonInteger.get());
+
+                //btnConnect.setText(R.string.connect); // Change the text of the connect/disconnect button back to 'Connect'
+
+                connected = false;
+            }
+        }*/
+    }
+
     @Override
     protected void onStop() {
         super.onStop();
-        connectNet.setText(R.string.connect_button_connect);
-        tvGDStatusText.setText(R.string.status_text_unknown);
-        toggleDoor.setEnabled(false);
-        myAtomicButtonInteger.getAndSet(4);
-        newStatusOfGarageDoor = "";
-        currentStatusOfGarageDoor = "";
-        crackDoor.setChecked(false);
-        crackDoor.setEnabled(false);
 
-        // *****************BELOW IS NEW 11-29-13
-        newGDStatusImage = getResources().getDrawable(R.drawable.ic_inapp_status_unknown);
-        imgGarageDoorStatus.setImageDrawable(newGDStatusImage);
-        // *****************END NEW 11-29-13
+        //btnConnect.setText(R.string.connect);
     }
 
     @Override
@@ -293,168 +337,42 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Sh
     } // End of class OurView
 
     public class ClientThread implements Runnable {
+        Socket socket;
+
+        char[] buf = new char[255];
+        byte[] cmd = new byte[5];
 
         public void run() {
             try {
 
                 Log.d("ClientActivity", "C: Connecting...");
 
-                Socket socket = new Socket();
+                socket = new Socket();
                 SocketAddress adr = new InetSocketAddress(serverIpAddress, serverPort);
                 socket.connect(adr, 5000); // 2nd parameter is timeout!!!
 
                 connected = true;
 
+                Log.d("ClientActivity", "C: Connected");
+
                 while (connected) {
-
-                    // New handler to update connect button to say 'disconnect' because we are connected at this point!
-                    handler.post(new Runnable() {
-                        public void run() {
-                            //connectNet.setText(R.string.connect_button_disconnect);
-                        }
-                    });
-
                     try {
-                        //Log.d("ClientActivity", "C: Sending password.");
-                        //Log.d("ClientActivity", "C: Password," + myPass + ", sent.");
-
-                        // Not sure if this should go here, but we updated the connection status and enable the toggle door button here
                         handler.post(new Runnable() {
+                            @Override
                             public void run() {
-                                //tvConStatusText.setText(R.string.connection_status_connected);
-                                //toggleDoor.setEnabled(true);
+                                /*
+                                try {
+                                    BufferedReader r = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+
+                                    if ((r.read(buf, 0, 255)) > 0) {
+                                        Log.d("ClientActivity", "Received: " + buf.toString());
+                                    }
+                                } catch (Exception e) {
+                                    Log.e("ClientActivity", "S: Error, e");
+                                }
+                                */
                             }
                         });
-
-                        BufferedReader r = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                        final StringBuilder total = new StringBuilder(); // 'final' was added to allow this string to be able to be used below
-                        //String line;
-                        while ((line = r.readLine()) != null) {
-                            total.append(line); // This probably isn't needed, right? We only want one line at a time
-
-    					/* *** ALL Code should go in here ??? ****
-
-    					Because it will catch everything , until the socket connection is closed???
-    					See: http://stackoverflow.com/questions/2500107/how-should-i-read-from-a-buffered-reader
-    					and: http://docs.oracle.com/javase/tutorial/networking/sockets/readingWriting.html
-    					Note: We should read 'line' instead of 'total' as we are currently below
-    					(out of this loop... - handler.post...)
-
-    					*/
-
-                            if (line.toString().contentEquals("incorrect password")) {
-                                // Incorrect password stuff here
-                                connected = false;
-                                socket.close();
-                                Log.d("ServerActivity", "Incorrect Password block ran");
-
-                                handler.post(new Runnable() {
-                                    public void run() {
-                                        tvConStatusText.setText(R.string.connection_status_disconnected);
-                                        tvGDStatusText.setText(R.string.status_text_unknown);
-                                        connectNet.setText(R.string.connect_button_connect);
-                                        toggleDoor.setEnabled(false);
-                                        Toast.makeText(MainActivity.this, "Incorrect password. Please check your password and try again.", Toast.LENGTH_SHORT).show();
-                                    }
-                                });
-
-                                break;
-                            }
-
-                            // Had to add this if statement because the status wasn't getting updated
-                            // upon an immediate reconnection
-                            if (connected) {
-                                // We only want to execute the below code if we received a garage door status
-                                // This allows us capture other kind of data below this if block later on
-                                // as a feature update later
-                                if (line.toString().contentEquals("status:open") || line.toString().contentEquals("status:closed")) {
-
-                                    newStatusOfGarageDoor = line.toString();
-
-                                    Log.d("ServerActivity", "newStatusOfGarageDoor: " + newStatusOfGarageDoor);
-                                    Log.d("ServerActivity", "currentStatusOfGarageDoor: " + currentStatusOfGarageDoor);
-
-                                    // If the new and old garage statuses don't match, let's do some stuff
-                                    // like update the UI
-                                    if (!newStatusOfGarageDoor.equals(currentStatusOfGarageDoor)) {
-                                        handler.post(new Runnable() {
-                                            public void run() {
-
-                                                if (newStatusOfGarageDoor.equals("status:open")) {
-                                                    tvGDStatusText.setText(R.string.status_text_open);
-                                                    toggleDoor.setText(R.string.toggle_button_close);
-                                                    crackDoor.setEnabled(false);
-
-                                                    // *****************BELOW IS NEW 11-29-13
-                                                    newGDStatusImage = getResources().getDrawable(R.drawable.ic_inapp_status_open);
-                                                    imgGarageDoorStatus.setImageDrawable(newGDStatusImage);
-                                                    // *****************END NEW 11-29-13
-
-                                                    //Log.d("ServerActivity", "gdStateChanged!");
-                                                } else if (newStatusOfGarageDoor.equals("status:closed")) {
-                                                    tvGDStatusText.setText(R.string.status_text_closed);
-                                                    toggleDoor.setText(R.string.toggle_button_open);
-                                                    crackDoor.setEnabled(true);
-
-                                                    // *****************BELOW IS NEW 11-29-13
-                                                    newGDStatusImage = getResources().getDrawable(R.drawable.ic_inapp_status_closed);
-                                                    imgGarageDoorStatus.setImageDrawable(newGDStatusImage);
-                                                    // *****************END NEW 11-29-13
-
-                                                    //Log.d("ServerActivity", "gdStateChanged!");
-                                                } else {
-
-                                                    // Temporary..just to see if something else comes in
-                                                    tvGDStatusText.setText(newStatusOfGarageDoor);
-                                                    // Temporary..just to see if something else comes in
-                                                }
-
-                                                currentStatusOfGarageDoor = newStatusOfGarageDoor;
-                                            }
-                                        });
-                                    } // End if the new and current garage statuses don't match
-                                } // End if a status request was received
-                            } // End of new if statement
-                            // Had to add this if statement because the status wasn't getting updated
-                            // upon an immediate reconnection
-
-                            //Log.d("Server response", line.toString());
-
-                            //Log.d("ClientActivity", "(Still?) tmpAtomic=" + myAtomicButtonInteger.get());
-
-
-                            if (myAtomicButtonInteger.get() == 2) {
-                                out.println("cmd=gdToggle@");
-                                //Log.d("ClientActivity", "Sent: cmd=gdToggle@");
-                                myAtomicButtonInteger.set(0);
-                            } else if (myAtomicButtonInteger.get() == 3) {
-                                out.println("cmd=gdCrack:" + milsToPauseForCrack + "@");
-                                //Log.d("ClientActivity", "Sent: cmd=gdCrack:" + milsToPauseForCrack + "@");
-                                myAtomicButtonInteger.set(0);
-                            } else if (myAtomicButtonInteger.get() == 4) {
-                                out.println("disconnect@");
-                                //Log.d("ClientActivity", "Sent: disconnect@");
-                                connected = false;
-                                socket.close();
-                                myAtomicButtonInteger.set(0);
-                                // Use a handler to update the connection status to show that we're disconnected now
-                                handler.post(new Runnable() {
-                                    public void run() {
-                                        tvConStatusText.setText(R.string.connection_status_disconnected);
-                                        tvGDStatusText.setText(R.string.status_text_unknown);
-                                        crackDoor.setChecked(false);
-                                        crackDoor.setEnabled(false);
-
-                                        // *****************BELOW IS NEW 11-29-13
-                                        newGDStatusImage = getResources().getDrawable(R.drawable.ic_inapp_status_unknown);
-                                        imgGarageDoorStatus.setImageDrawable(newGDStatusImage);
-                                        // *****************END NEW 11-29-13
-                                    }
-                                });
-
-                                break; // If the disconnect button was pressed, break out of the current 'while' loop (disconnect)
-                            }
-                        }
                     } catch (Exception e) {
                         Log.e("ClientActivity", "S: Error", e);
                     }
@@ -469,21 +387,89 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Sh
                 connected = false;
                 handler.post(new Runnable() {
                     public void run() {
-                        Toast.makeText(MainActivity.this, "Connection timed out! Please check your internet connection, and address/port settings", Toast.LENGTH_LONG).show();
-                        connectNet.setText(R.string.connect_button_connect);
-                        // Change text on button to 'CONNECT' so user can try different ip/port!
+                        Toast.makeText(Drive.this, "Connection timed out! Please check your internet connection, and address/port settings", Toast.LENGTH_LONG).show();
+                        //btnConnect.setText(R.string.connect);
                     }
                 });
-
-                //}
-                // End timeout catch
 
             } catch (Exception e) {
                 Log.e("ClientActivity", "C: Error", e);
                 connected = false;
             }
         } // End of run()
+
+        private void transmit(byte[] args) {
+            CRC crcHandler = new CRC();
+
+            try {
+                OutputStream out = socket.getOutputStream();
+
+                crcHandler.update(Arrays.copyOfRange(args, 0, args.length - 2));
+
+                args[args.length - 2] = (byte)(crcHandler.getCRC() >> 8 & 0xFF);
+                args[args.length - 1] = (byte)(crcHandler.getCRC()      & 0xFF);
+
+                out.write(args, 0, args.length);
+            } catch (Exception e) {
+                Log.e("ClientActivity", "C: Transmit Error", e);
+                connected = false;
+            }
+        }
+
+        public void send_speed(byte speed) {
+            byte[] cmd = new byte[4];
+
+            cmd[0] = 0x51;
+            cmd[1] = speed;
+
+            transmit(cmd);
+        }
+
+        public void send_direction(byte dir) {
+            byte[] cmd = new byte[4];
+
+            cmd[0] = 0x52;
+            cmd[1] = dir;
+
+            transmit(cmd);
+        }
     } // End of class ClientThread
+
+    public class CRC {
+        public final static int polynomial = 0x1021;	// Represents x^16+x^12+x^5+1
+        int crc;
+
+        public CRC(){
+            crc = 0x0000;
+        }
+
+        public int getCRC(){
+            return crc;
+        }
+
+        public String getCRCHexString(){
+            String crcHexString = Integer.toHexString(crc);
+            return crcHexString;
+        }
+
+        public void resetCRC(){
+            crc = 0xFFFF;
+        }
+
+        public void update(byte[] args) {
+            for (byte b : args) {
+                for (int i = 0; i < 8; i++) {
+                    boolean bit = ((b   >> (7-i) & 1) == 1);
+                    boolean c15 = ((crc >> 15    & 1) == 1);
+                    crc <<= 1;
+                    // If coefficient of bit and remainder polynomial = 1 xor crc with polynomial
+                    if (c15 ^ bit) crc ^= polynomial;
+                }
+            }
+
+            crc &= 0xffff;
+        }
+    }
 
     public boolean isNetworkAvailable() {
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
