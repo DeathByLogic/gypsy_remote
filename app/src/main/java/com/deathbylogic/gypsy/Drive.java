@@ -21,60 +21,64 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
-import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
-import java.lang.reflect.Array;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
 import java.util.Arrays;
-import java.util.concurrent.atomic.AtomicInteger;
 
-public class Drive extends ActionBarActivity implements View.OnTouchListener, View.OnClickListener, SharedPreferences.OnSharedPreferenceChangeListener {
+interface ICallback {
+    void callback();
+}
+
+public class Drive extends ActionBarActivity implements View.OnTouchListener, View.OnClickListener, SharedPreferences.OnSharedPreferenceChangeListener, ICallback {
     private float cur_x, start_x;
     private float cur_y, start_y;
+
+    private int speed_multiplier;
+    private int dir_multiplier;
+
     private int speed;
     private int direction;
+
     private boolean moveEvent = false;
 
-    private Button btnConnect;
-
-    private String  serverIpAddress = "";
-    private int     serverPort;
-
-    private String line;
-
-    private boolean connected = false;
-
-    private Handler handler = new Handler();
-    private AtomicInteger myAtomicButtonInteger;
+    MenuItem mnu_connect;
+    MenuItem mnu_settings;
+    MenuItem mnu_enabled;
 
     OurView v;
-    ClientThread c;
-    Thread  cThread;
+    Remote c;
+    Thread t = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_drive);
 
+        // Populate field with default values from preferences
+        SharedPreferences settings = PreferenceManager.getDefaultSharedPreferences(this);
+        settings.registerOnSharedPreferenceChangeListener(this);
+
+        // Get Settings
+        String serverIPAddress = settings.getString("server_ip", "localhost");
+        String serverPort = settings.getString("server_port", "1988");
+        speed_multiplier = Integer.parseInt(settings.getString("max_speed", "100"));
+        dir_multiplier = Integer.parseInt(settings.getString("turn_speed", "100"));
+
         // Setup onTouchListener for View
         v = new OurView(this);
         v.setOnTouchListener(this);
         setContentView(v);
 
-        // Check network status
-        boolean isNetworkConnected = isNetworkAvailable();
+        // New Remote object
+        c = new Remote(this, serverIPAddress, serverPort);
 
-        if (!isNetworkConnected) {
+        // Check network status
+        if (!isNetworkAvailable()) {
             // Toast message here
             //Toast.makeText(MainActivity.this, "We have connectivity", Toast.LENGTH_SHORT).show();
 
@@ -92,26 +96,17 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
             alert.show();
             // End alert dialog here
         }
-
-        // TODO - !!!PUT THIS ALL IN A SEPARATE METHOD!!!
-        // Populate field with default values from preferences
-        SharedPreferences settings = PreferenceManager.getDefaultSharedPreferences(this);
-
-        // Get Settings
-        serverIpAddress = settings.getString("server_ip", "localhost");
-        serverPort = Integer.parseInt(settings.getString("server_port", "1988"));
-
-        //btnConnect = (Button) findViewById(R.id.btnConnect);
-        c = new ClientThread();
-        cThread = new Thread(c);
-        cThread.start();
     }
-
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         // Inflate the menu; this adds items to the action bar if it is present.
         getMenuInflater().inflate(R.menu.menu_drive, menu);
+
+        mnu_connect = menu.findItem(R.id.action_connect);
+        mnu_settings = menu.findItem(R.id.action_settings);
+        mnu_enabled = menu.findItem(R.id.action_enable);
+
         return true;
     }
 
@@ -131,7 +126,24 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
 
                 return true;
             case R.id.action_connect:
+                if (c.isConnected()) {
+                    c.disconnect();
+                } else {
+                    t = new Thread(c);
+                    t.start();
+                }
 
+                return true;
+            case R.id.action_enable:
+                if (c.isConnected()) {
+                    if (c.isRemoteEnabled()) {
+                        c.disableRemote();
+                    } else {
+                        c.enableRemote();
+                    }
+                } else {
+                    Toast.makeText(Drive.this, "You must be connected to enable remote.", Toast.LENGTH_LONG).show();
+                }
 
                 return true;
             default:
@@ -142,23 +154,13 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
     }
 
     public void onSharedPreferenceChanged(SharedPreferences prefs, String key) {
-//        SharedPreferences settings = PreferenceManager.getDefaultSharedPreferences(this);
-//        myPass = settings.getString("settings_password", "default password");
-//        settings_ip_domain = settings.getString("settings_ipdomain", "123.45.67.89"); // If no settings, default to the ip in the 2nd parameter
-//        String settings_port = settings.getString("settings_port", "4999"); // If no settings, default to the port in the 2nd parameter
-//        milsToPauseForCrack = settings.getString("settings_crack_ms", "default milliseconds");
+        SharedPreferences settings = PreferenceManager.getDefaultSharedPreferences(this);
 
-//        myPass = myPass + "*"; // Add the end-of-password delimiter
+        c.serverIpAddress = settings.getString("server_ip", "localhost");
+        c.serverPort = settings.getString("server_port", "1988");
 
-//        defIPDomain = (EditText) findViewById(R.id.ip_domain);
-//        defPort = (EditText) findViewById(R.id.port);
-//        defIPDomain.setText(settings_ip_domain);
-//        defPort.setText(settings_port);
-
-        // *****************BELOW IS NEW 11-29-13
-//        newGDStatusImage = getResources().getDrawable(R.drawable.ic_inapp_status_unknown);
-//        imgGarageDoorStatus.setImageDrawable(newGDStatusImage);
-        // *****************END NEW 11-29-13
+        speed_multiplier = Integer.parseInt(settings.getString("max_speed", "100"));
+        dir_multiplier = Integer.parseInt(settings.getString("turn_speed", "100"));
     }
 
     public boolean onTouch(View v, MotionEvent event) {
@@ -187,16 +189,12 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
                 Double rawSpeed = Math.sqrt(Math.pow(cur_x - start_x, 2) + Math.pow(cur_y - start_y, 2));
                 int rawDir = (int)Math.toDegrees(-Math.atan2(start_x - cur_x, start_y - cur_y));
 
-                //SharedPreferences sharedPref = getDefaultSharedPreferences(Drive.this);
-
-                //int max_speed = sharedPref.getInt("max_speed", 0);
-
                 // Calculate speed based on raw speed length
                 if (rawSpeed > 200) {
                     if (((rawSpeed - 200) / (v.getWidth() / 4) * 100) > 100) {
                         speed = 100;
                     } else {
-                        speed = (int)((rawSpeed - 200) / (v.getWidth() / 4) * 100);
+                        speed = (int)((rawSpeed - 200) / (v.getWidth() / 4) * 100);//speed_multiplier);
                     }
                 } else {
                     speed = 0;
@@ -206,7 +204,7 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
                     if (Math.abs(rawDir) > 100) {
                         direction = (rawDir > 0)?100:-100;
                     } else {
-                        direction = (int)rawDir;
+                        direction = rawDir * 100;//(dir_multiplier / 100);
                     }
                 } else {
                     direction = 0;
@@ -215,13 +213,10 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
                 break;
         }
 
-        c.send_speed((byte)speed);
-        c.send_direction((byte)direction);
-
-        // Update text on screen
-        //updateMovementLabels();
-
-        // Send command to robot
+        if (c.isConnected()) {
+            c.setSpeed((byte) speed);
+            c.setDirection((byte) direction);
+        }
 
         return true;
     }
@@ -252,8 +247,6 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
     @Override
     protected void onStop() {
         super.onStop();
-
-        //btnConnect.setText(R.string.connect);
     }
 
     @Override
@@ -268,8 +261,24 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
         v.pause();
     }
 
-    public class OurView extends SurfaceView implements Runnable {
+    @Override
+    public void callback() {
+        if (c.isConnected()) {
+            mnu_connect.setTitle(R.string.action_disconnect);
+            mnu_settings.setEnabled(false);
+        } else {
+            mnu_connect.setTitle(R.string.action_connect);
+            mnu_settings.setEnabled(true);
+        }
 
+        if (c.isRemoteEnabled()) {
+            mnu_enabled.setTitle(R.string.action_remote_disable);
+        } else {
+            mnu_enabled.setTitle(R.string.action_remote_enable);
+        }
+    }
+
+    public class OurView extends SurfaceView implements Runnable {
         Thread t = null;
         SurfaceHolder holder;
         boolean isItOK = false;
@@ -336,50 +345,58 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
         }
     } // End of class OurView
 
-    public class ClientThread implements Runnable {
-        Socket socket;
+    public class Remote implements Runnable {
+        private Socket socket;
+        private Handler handler = new Handler();
+        private boolean connected = false;
+        private boolean isItOK = false;
+        public String serverIpAddress;
+        public String serverPort;
+        private byte config;
+        private ICallback ic;
 
-        char[] buf = new char[255];
-        byte[] cmd = new byte[5];
+        Remote(ICallback ic, String IPAddress, String Port) {
+            this.ic = ic;
+
+            serverIpAddress = IPAddress;
+            serverPort = Port;
+        }
 
         public void run() {
             try {
-
-                Log.d("ClientActivity", "C: Connecting...");
+                Log.d("Remote", "Net: Connecting");
 
                 socket = new Socket();
-                SocketAddress adr = new InetSocketAddress(serverIpAddress, serverPort);
+                SocketAddress adr = new InetSocketAddress(serverIpAddress, Integer.parseInt(serverPort));
                 socket.connect(adr, 5000); // 2nd parameter is timeout!!!
+
+                socket.setSoTimeout(100);
 
                 connected = true;
 
-                Log.d("ClientActivity", "C: Connected");
+                Log.d("Remote", "Net: Connected");
+
+                updateUI();
 
                 while (connected) {
                     try {
                         handler.post(new Runnable() {
                             @Override
                             public void run() {
-                                /*
-                                try {
-                                    BufferedReader r = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-
-                                    if ((r.read(buf, 0, 255)) > 0) {
-                                        Log.d("ClientActivity", "Received: " + buf.toString());
-                                    }
-                                } catch (Exception e) {
-                                    Log.e("ClientActivity", "S: Error, e");
-                                }
-                                */
+                                connected = socket.isConnected();
                             }
                         });
                     } catch (Exception e) {
-                        Log.e("ClientActivity", "S: Error", e);
+                        connected = false;
+
+                        Log.e("Remote", "Error", e);
                     }
                 }
 
                 socket.close();
-                Log.d("ClientActivity", "C: Closed.");
+
+                Log.d("Remote", "Net: Closed");
+                updateUI();
 
                 // Timeout catch
             } catch (java.net.SocketTimeoutException ste) {
@@ -388,16 +405,102 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
                 handler.post(new Runnable() {
                     public void run() {
                         Toast.makeText(Drive.this, "Connection timed out! Please check your internet connection, and address/port settings", Toast.LENGTH_LONG).show();
-                        //btnConnect.setText(R.string.connect);
                     }
                 });
 
             } catch (Exception e) {
-                Log.e("ClientActivity", "C: Error", e);
+                Log.e("Remote", "Error", e);
                 connected = false;
             }
         } // End of run()
 
+        public void pause() {
+
+        }
+
+        public void resume() {
+            t = new Thread(this);
+            t.start();
+        }
+
+        private void updateUI() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    ic.callback();
+                }
+            });
+        }
+
+        public void setServer(String address, String port) {
+            serverIpAddress = address;
+            serverPort = port;
+        }
+
+        public boolean isConnected() {
+            return connected;
+        }
+
+        // Close socket
+        public void disconnect() {
+            connected = false;
+        }
+
+        public void enableRemote() {
+            // Enable remote in config byte
+            config |= 0x01;
+
+            setConfig();
+
+            updateUI();
+        }
+
+        public void disableRemote() {
+            config &= ~(0x01);
+
+            setConfig();
+
+            updateUI();
+        }
+
+        public boolean isRemoteEnabled() {
+            if ((config & 0x01) > 0) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        public void setConfig() {
+            byte[] cmd = new byte[4];
+
+            cmd[0] = 0x42;
+            cmd[1] = config;
+
+            transmit(cmd);
+        }
+
+        public void setSpeed(byte speed) {
+            byte[] cmd = new byte[4];
+
+            cmd[0] = 0x51;
+            cmd[1] = speed;
+
+            transmit(cmd);
+        }
+
+        public void setDirection(byte dir) {
+            byte[] cmd = new byte[4];
+
+            cmd[0] = 0x52;
+            cmd[1] = dir;
+
+            transmit(cmd);
+        }
+
+        //
+        // Support Functions
+        //
         private void transmit(byte[] args) {
             CRC crcHandler = new CRC();
 
@@ -411,74 +514,58 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
 
                 out.write(args, 0, args.length);
             } catch (Exception e) {
-                Log.e("ClientActivity", "C: Transmit Error", e);
+                Log.e("Remote", "Transmit Error", e);
                 connected = false;
             }
         }
 
-        public void send_speed(byte speed) {
-            byte[] cmd = new byte[4];
+        private class CRC {
+            public final static int polynomial = 0x1021;	// Represents x^16+x^12+x^5+1
+            int crc;
 
-            cmd[0] = 0x51;
-            cmd[1] = speed;
-
-            transmit(cmd);
-        }
-
-        public void send_direction(byte dir) {
-            byte[] cmd = new byte[4];
-
-            cmd[0] = 0x52;
-            cmd[1] = dir;
-
-            transmit(cmd);
-        }
-    } // End of class ClientThread
-
-    public class CRC {
-        public final static int polynomial = 0x1021;	// Represents x^16+x^12+x^5+1
-        int crc;
-
-        public CRC(){
-            crc = 0x0000;
-        }
-
-        public int getCRC(){
-            return crc;
-        }
-
-        public String getCRCHexString(){
-            String crcHexString = Integer.toHexString(crc);
-            return crcHexString;
-        }
-
-        public void resetCRC(){
-            crc = 0xFFFF;
-        }
-
-        public void update(byte[] args) {
-            for (byte b : args) {
-                for (int i = 0; i < 8; i++) {
-                    boolean bit = ((b   >> (7-i) & 1) == 1);
-                    boolean c15 = ((crc >> 15    & 1) == 1);
-                    crc <<= 1;
-                    // If coefficient of bit and remainder polynomial = 1 xor crc with polynomial
-                    if (c15 ^ bit) crc ^= polynomial;
-                }
+            public CRC(){
+                crc = 0x0000;
             }
 
-            crc &= 0xffff;
-        }
-    }
+            public int getCRC(){
+                return crc;
+            }
 
-    public boolean isNetworkAvailable() {
+            public String getCRCHexString(){
+                String crcHexString = Integer.toHexString(crc);
+                return crcHexString;
+            }
+
+            public void resetCRC(){
+                crc = 0xFFFF;
+            }
+
+            public void update(byte[] args) {
+                for (byte b : args) {
+                    for (int i = 0; i < 8; i++) {
+                        boolean bit = ((b   >> (7-i) & 1) == 1);
+                        boolean c15 = ((crc >> 15    & 1) == 1);
+                        crc <<= 1;
+                        // If coefficient of bit and remainder polynomial = 1 xor crc with polynomial
+                        if (c15 ^ bit) crc ^= polynomial;
+                    }
+                }
+
+                crc &= 0xffff;
+            }
+        }  // End of class CRC
+    } // End of class Remote
+
+    private boolean isNetworkAvailable() {
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         NetworkInfo networkInfo = cm.getActiveNetworkInfo();
+
         // if no network is available networkInfo will be null
         // otherwise check if we are connected
         if (networkInfo != null && networkInfo.isConnected()) {
             return true;
         }
+
         return false;
     }
 
