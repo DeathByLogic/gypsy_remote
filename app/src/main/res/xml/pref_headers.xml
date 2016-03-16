@@ -2,11 +2,8 @@
 
     <!-- These settings headers are only used on tablets. -->
 
-    <header android:fragment="com.deathbylogic.gypsy.SettingsActivity$GeneralPreferenceFragment"
-        android:title="@string/pref_header_general" />
-
     <header
         android:fragment="com.deathbylogic.gypsy.SettingsActivity$NotificationPreferenceFragment"
-        android:title="@string/pref_header_server" />
+        android:title="@string/pref_header_movement" />
 
 </preference-headers>

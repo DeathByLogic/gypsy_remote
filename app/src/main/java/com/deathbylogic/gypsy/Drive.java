@@ -76,6 +76,8 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
 
         // New Remote object
         c = new Remote(this, serverIPAddress, serverPort);
+        t = new Thread(c);
+        t.start();
 
         // Check network status
         if (!isNetworkAvailable()) {
@@ -129,8 +131,8 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
                 if (c.isConnected()) {
                     c.disconnect();
                 } else {
-                    t = new Thread(c);
-                    t.start();
+                    c.connect();
+                    t.run();
                 }
 
                 return true;
@@ -187,14 +189,14 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
                 Float yLength = cur_y - start_y;
 
                 Double rawSpeed = Math.sqrt(Math.pow(cur_x - start_x, 2) + Math.pow(cur_y - start_y, 2));
-                int rawDir = (int)Math.toDegrees(-Math.atan2(start_x - cur_x, start_y - cur_y));
+                Double rawDir = Math.toDegrees(-Math.atan2(start_x - cur_x, start_y - cur_y));
 
                 // Calculate speed based on raw speed length
                 if (rawSpeed > 200) {
                     if (((rawSpeed - 200) / (v.getWidth() / 4) * 100) > 100) {
-                        speed = 100;
+                        speed = speed_multiplier;
                     } else {
-                        speed = (int)((rawSpeed - 200) / (v.getWidth() / 4) * 100);//speed_multiplier);
+                        speed = (int)((rawSpeed - 200) / (v.getWidth() / 4) * speed_multiplier);
                     }
                 } else {
                     speed = 0;
@@ -202,9 +204,9 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
 
                 if (rawSpeed > 50) {
                     if (Math.abs(rawDir) > 100) {
-                        direction = (rawDir > 0)?100:-100;
+                        direction = (rawDir > 0)?dir_multiplier:-dir_multiplier;
                     } else {
-                        direction = rawDir * 100;//(dir_multiplier / 100);
+                        direction = (int)(rawDir * ((float)dir_multiplier / 100.0));
                     }
                 } else {
                     direction = 0;
@@ -265,10 +267,8 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
     public void callback() {
         if (c.isConnected()) {
             mnu_connect.setTitle(R.string.action_disconnect);
-            mnu_settings.setEnabled(false);
         } else {
             mnu_connect.setTitle(R.string.action_connect);
-            mnu_settings.setEnabled(true);
         }
 
         if (c.isRemoteEnabled()) {
@@ -346,7 +346,7 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
     } // End of class OurView
 
     public class Remote implements Runnable {
-        private Socket socket;
+        private Socket socket;// = new Socket();
         private Handler handler = new Handler();
         private boolean connected = false;
         private boolean isItOK = false;
@@ -363,6 +363,38 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
         }
 
         public void run() {
+            //connect();
+        } // End of run()
+
+        public void pause() {
+
+        }
+
+        public void resume() {
+            t = new Thread(this);
+            t.start();
+        }
+
+        private void updateUI() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    ic.callback();
+                }
+            });
+        }
+
+        public void setServer(String address, String port) {
+            serverIpAddress = address;
+            serverPort = port;
+        }
+
+        public boolean isConnected() {
+            return connected;
+        }
+
+        // Open socket
+        public void connect() {
             try {
                 Log.d("Remote", "Net: Connecting");
 
@@ -412,33 +444,6 @@ public class Drive extends ActionBarActivity implements View.OnTouchListener, Vi
                 Log.e("Remote", "Error", e);
                 connected = false;
             }
-        } // End of run()
-
-        public void pause() {
-
-        }
-
-        public void resume() {
-            t = new Thread(this);
-            t.start();
-        }
-
-        private void updateUI() {
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    ic.callback();
-                }
-            });
-        }
-
-        public void setServer(String address, String port) {
-            serverIpAddress = address;
-            serverPort = port;
-        }
-
-        public boolean isConnected() {
-            return connected;
         }
 
         // Close socket
